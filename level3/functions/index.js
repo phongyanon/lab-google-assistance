@@ -20,6 +20,8 @@ const {
   BasicCard,
   Permission,
   Suggestions,
+  Carousel,
+  Image,
 } = require('actions-on-google');
 
 // Import the firebase-functions package for deployment.
@@ -61,13 +63,18 @@ const colorMap = {
 
 // Handle the Dialogflow intent named 'Default Welcome Intent'.
 app.intent('Default Welcome Intent', (conv) => {
-  // Asks the user's permission to know their name, for personalization.
-  conv.ask(new Permission({
-    context: 'Hi there, to get to know you better',
-    permissions: 'NAME',
-  }));
-});
-
+  const name = conv.user.storage.userName;
+  if (!name) {
+    // Asks the user's permission to know their name, for personalization.
+    conv.ask(new Permission({
+      context: 'Hi there, to get to know you better',
+      permissions: 'NAME',
+    }));
+  } else {
+    conv.ask(`Hi again, ${name}. What's your favorite color?`);
+    conv.ask(new Suggestions('Blue', 'Red', 'Green'));
+  }
+ });
 // Handle the Dialogflow intent named 'actions_intent_PERMISSION'. If user
 // agreed to PERMISSION prompt, then boolean value 'permissionGranted' is true.
 app.intent('actions_intent_PERMISSION', (conv, params, permissionGranted) => {
@@ -79,6 +86,7 @@ app.intent('actions_intent_PERMISSION', (conv, params, permissionGranted) => {
     // If the user accepted our request, store their name in
     // the 'conv.data' object for the duration of the conversation.
     conv.data.userName = conv.user.name.display;
+    conv.user.storage.userName = conv.data.userName
     conv.ask(`Thanks, ${conv.data.userName}. What's your favorite color?`);
     conv.ask(new Suggestions('Blue', 'Red', 'Green'));
   }
@@ -107,9 +115,77 @@ app.intent('favorite color', (conv, {color}) => {
 // Handle the Dialogflow intent named 'favorite fake color'.
 // The intent collects a parameter named 'fakeColor'.
 app.intent('favorite fake color', (conv, {fakeColor}) => {
+  fakeColor = conv.arguments.get('OPTION') || fakeColor;
   // Present user with the corresponding basic card and end the conversation.
-  conv.close(`Here's the color`, new BasicCard(colorMap[fakeColor]));
+  if (!conv.screen) {
+    conv.ask(colorMap[fakeColor].text);
+  } else {
+    conv.ask(`Here you go.`, new BasicCard(colorMap[fakeColor]));
+  }
+  conv.ask('Do you want to hear about another fake color?');
+  conv.ask(new Suggestions('Yes', 'No'));
 });
 
-// Set the DialogflowApp object to handle the HTTPS POST request.
+// Handle the Dialogflow NO_INPUT intent.
+// Triggered when the user doesn't provide input to the Action
+app.intent('actions_intent_NO_INPUT', (conv) => {
+  // Use the number of reprompts to vary response
+  const repromptCount = parseInt(conv.arguments.get('REPROMPT_COUNT'));
+  if (repromptCount === 0) {
+    conv.ask('Which color would you like to hear about?');
+  } else if (repromptCount === 1) {
+    conv.ask(`Please say the name of a color.`);
+  } else if (conv.arguments.get('IS_FINAL_REPROMPT')) {
+    conv.close(`Sorry we're having trouble. Let's ` +
+      `try this again later. Goodbye.`);
+  }
+});
+
+// In the case the user is interacting with the Action on a screened device
+// The Fake Color Carousel will display a carousel of color cards
+const fakeColorCarousel = () => {
+  const carousel = new Carousel({
+   items: {
+     'indigo taco': {
+       title: 'Indigo Taco',
+       synonyms: ['indigo', 'taco'],
+       image: new Image({
+         url: 'https://storage.googleapis.com/material-design/publish/material_v_12/assets/0BxFyKV4eeNjDN1JRbF9ZMHZsa1k/style-color-uiapplication-palette1.png',
+         alt: 'Indigo Taco Color',
+       }),
+     },
+     'pink unicorn': {
+       title: 'Pink Unicorn',
+       synonyms: ['pink', 'unicorn'],
+       image: new Image({
+         url: 'https://storage.googleapis.com/material-design/publish/material_v_12/assets/0BxFyKV4eeNjDbFVfTXpoaEE5Vzg/style-color-uiapplication-palette2.png',
+         alt: 'Pink Unicorn Color',
+       }),
+     },
+     'blue grey coffee': {
+       title: 'Blue Grey Coffee',
+       synonyms: ['blue', 'grey', 'coffee'],
+       image: new Image({
+         url: 'https://storage.googleapis.com/material-design/publish/material_v_12/assets/0BxFyKV4eeNjDZUdpeURtaTUwLUk/style-color-colorsystem-gray-secondary-161116.png',
+         alt: 'Blue Grey Coffee Color',
+       }),
+     },
+ }});
+ return carousel;
+};
+
+// Handle the Dialogflow follow-up intents
+app.intent(['favorite color - yes', 'favorite fake color - yes'], (conv) => {
+  conv.ask('Which color, indigo taco, pink unicorn or blue grey coffee?');
+  // If the user is using a screened device, display the carousel
+  if (conv.screen) return conv.ask(fakeColorCarousel());
+ });
+
+app.intent('forget me', (conv) => {
+  conv.ask('I will forget your name');
+  conv.user.storage = {};
+  conv.data = {};
+})
+
+ // Set the DialogflowApp object to handle the HTTPS POST request.
 exports.dialogflowFirebaseFulfillment = functions.https.onRequest(app);
